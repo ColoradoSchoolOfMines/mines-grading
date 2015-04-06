@@ -1,0 +1,117 @@
+#!/bin/bash
+# unit7 autograder helper script
+# usage:
+#     ./gradehelper-u07 username
+
+[[ -z $1 ]] && exit 1
+cd $1
+
+main() {
+  # Link and update the git repo
+  ln -sv `pwd`/../../03/$1/* repo
+  echo `pwd`/../../03/$1/* repo
+  cd repo
+  git stash
+  git checkout master
+  git pull
+  git submodule init
+  git submodule update --remote --merge
+
+  # Check out the last commit before the due date.
+  git checkout `git rev-list -n 1 --before="2015-02-26 08:00 -0700" master`
+
+  # cd to unit07
+  cd *nit*7 || cd src || cd *446/src || die "`ls`"
+  # again, just in case there are more levels
+  cd *nit*7 || echo ignoring error
+
+  israilsdir || die "No rails app found in `pwd`"
+  # byebug dies on 1.9.3, chuck it
+  sed -i 's/^\(.*byebug\)/#\1/' Gemfile
+  # make sure there's a secrets file.
+  [[ -f config/secrets.yml ]] || cat > config/secrets.yml << EOF
+development:
+  secret_key_base: 3b7cd727ee24e8444053437c36cc66c3
+  some_api_key: SOMEKEY
+EOF
+
+  # set up signal handler
+  trap int_handler INT
+
+  rake db:migrate || fixrake || exit 1
+  rake db:seed || die "Rake failed."
+
+  # check some requirements
+  ## step 1
+  [[ -e app/models/pet.rb ]] || missing "(-5) pet class"
+  ls app/models/
+  require "(4) Test for empty pet and pet with no name"
+  require "(8) Test for valid and invalid description lengths"
+  require "(1) Meaningful names and comments in all tests"
+  cat test/models/pet_test.rb; cat test/controllers/pets_controller_test.rb
+  ### make sure the tests pass
+  rake db:migrate RAILS_ENV=test || die "rake failed"
+  rake test || missing "(-?) tests fail"
+  ## step 2
+  grep pet_type app/models/pet.rb || missing "(-2) pet_type enum in pet class"
+  grep pet_type.*default db/migrate/*add_pet_type*.rb || missing "(-2) migration to add pet type w/default"
+  if [[ $(bc <<< `grep Pet.create db/seeds.rb |wc -l`\>=6) == 0 ]]; then
+    missing "(-2) seeds file to start with at least 6 pets"
+    cat db/seeds.rb
+  fi
+  grep pet_type app/views/pets/index.html.erb || missing "(-2) index accepts pet_type"
+  grep pet_type app/views/pets/show.html.erb || missing "(-2) show accepts pet_type"
+  grep select.*pet_type app/views/pets/_form.html.erb || missing "(-3) _form accepts pet_type, with dropdown"
+  grep text.*description app/views/pets/_form.html.erb || missing "(-1) long description"
+  ## step 3
+  grep -r render app/views || missing "(-3) partials"
+  ls app/views/layout*/* || missing "(-2) layout"
+  grep -r image_tag app/views/ || missing "(-3) image"
+  require "(10) reasonable styling"
+
+
+
+  # run rails
+  rails server -d || exit 1
+  xdg-open http://localhost:3000/pets
+
+  # wait for it to open, then kill rails
+  sleep 5
+  int_handler
+}
+
+
+int_handler() {
+  # kill rails
+  killall -INT ruby; sleep 0.5
+  killall -9 ruby
+
+  exit
+}
+
+missing() {
+  echo -e '\e[1;31m==> Missing requirement: '"$1"'\e[0m'
+  #echo "`pwd` missing requirement: $1" >> /data/george/grading/csci446/05/log 
+}
+
+require() {
+  echo -e '\e[1;34m==> requirement: '"$1"'\e[0m'
+}
+
+die() {
+  echo Can\'t continue. :\(
+  echo "$1"
+  exit 1
+}
+
+israilsdir() {
+  [[ -e app ]]
+}
+
+fixrake() {
+  bundle install
+  rake db:migrate || (echo Rake won\'t run.; exit 1)
+}
+
+# Run
+main $1 $2

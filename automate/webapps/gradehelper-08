@@ -1,0 +1,115 @@
+#!/bin/bash
+# unit8 autograder helper script
+# usage:
+#     ./gradehelper-u08 username
+
+[[ -z $1 ]] && exit 1
+cd $1
+
+main() {
+  # Link and update the git repo
+  ln -sv `pwd`/../../03/$1/* repo
+  echo `pwd`/../../03/$1/* repo
+  cd repo
+  git stash
+  git checkout master
+  git pull
+  git submodule init
+  git submodule update --remote --merge
+
+  # Check out the last commit before the due date.
+  git checkout `git rev-list -n 1 --before="2015-03-16 00:00 -0700" master`
+
+  # cd to unit08
+  cd *nit*8 || cd src || cd *446/src || die "`ls`"
+  # again, just in case there are more levels
+  cd *nit*8 || echo ignoring error
+
+  israilsdir || die "No rails app found in `pwd`"
+  # byebug dies on 1.9.3, chuck it
+  sed -i 's/^\(.*byebug\)/#\1/' Gemfile
+  # make sure there's a secrets file.
+  [[ -f config/secrets.yml ]] || cat > config/secrets.yml << EOF
+development:
+  secret_key_base: 3b7cd727ee24e8444053437c36cc66c3
+  some_api_key: SOMEKEY
+EOF
+
+  # set up signal handler
+  trap int_handler INT
+
+  rake db:migrate || fixrake || exit 1
+  rake db:seed || echo "==> Rake seed failed!"
+
+  # check some requirements
+  ## step 1
+  grep -r "order(.*pet_type" app || missing "(-1) pets in order"
+  grep "root.*'shelter.*index" config/routes.rb || missing "(-1) shelter index page is root"
+  ## step 2
+  ls app/controllers/carts_controller.rb || missing "(-2) carts controller"
+  ls app/controllers/selected*pets_controller.rb || missing "(-2) selected pets controller"
+  ## step 3
+  kde-open *pdf || missing "(-20) pdf in root of unit08"
+  grep 'include CurrentCart' app/controllers/selected_pets_controller.rb || missing "(-2) CurrentCart"
+  ## step 4
+  grep button_.*select.*pet app/views/shelter*/index.html.erb || missing "(-2) Select Pet button"
+  grep -r "@selected_pet = @cart.selected_pet.*.build(pet: pet)" app/controllers || missing "(-2) pet is added to cart"
+  grep pet app/views/cart*/show.html.erb || missing "(-2) cart displayed with list of pets"
+  ## step 5
+  rake db:migrate RAILS_ENV=test
+  rake test | grep should_create_selected_pet && missing "Tests failed: (-4) 'should create' and assert_redirected_to tests pass"
+  ## step 6
+  grep 'def invalid_cart' app/controllers/carts_controller.rb || missing "(-4) handles manually changing cart id in url"
+  ## step 7
+  grep -i status db/schema.rb || missing "(-2) pet has a status"
+  grep '@cart.destroy' app/controllers/cart*_controller.rb || missing "(-2) cart can be emptied"
+  require "(-2) pet status is updated when pet is selected"
+  require "(-2) cart can be emptied"
+  require "(-4) when cart emptied, pet status updated"
+  grep -10 '@cart.destroy if @cart.id == session[:cart_id]' app/controllers/cart*_controller.rb || grep -10 @cart.destroy app/controllers/cart*_controller.rb || missing "^^"
+
+
+  # run rails
+  rails server -d || exit 1
+  xdg-open http://localhost:3000/
+
+  # wait for it to open, then kill rails
+  sleep 5
+  int_handler
+}
+
+
+int_handler() {
+  # kill rails
+  killall -INT ruby; sleep 0.5
+  killall -9 ruby
+
+  exit
+}
+
+missing() {
+  echo -e '\e[1;31m==> Missing requirement: '"$1"'\e[0m'
+  #echo "`pwd` missing requirement: $1" >> /data/george/grading/csci446/05/log 
+}
+
+require() {
+  echo -e '\e[1;34m==> requirement: '"$1"'\e[0m'
+}
+
+die() {
+  echo Can\'t continue. :\(
+  echo "$1"
+  exit 1
+}
+
+israilsdir() {
+  [[ -e app ]]
+}
+
+fixrake() {
+  bundle install
+  rake db:migrate || rake db:schema:load || (echo Rake won\'t run.; exit 1)
+}
+
+# Run
+main $1 $2

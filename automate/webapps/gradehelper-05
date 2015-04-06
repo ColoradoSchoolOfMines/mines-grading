@@ -1,0 +1,105 @@
+#!/bin/bash
+# unit5 autograder helper script
+# usage:
+#     ./gradehelper-u05 username
+
+[[ -z $1 ]] && exit 1
+cd $1
+
+main() {
+  # Link and update the git repo
+  ln -sv `pwd`/../../03/$1/* repo
+  echo `pwd`/../../03/$1/* repo
+  cd repo
+  git stash
+  git checkout master
+  git pull
+  git submodule init
+  git submodule update --remote --merge
+
+  # cd to unit05
+  cd *nit*5 || cd src || cd *446/src || die "`ls`"
+  # again, just in case there are more levels
+  cd *nit*5 || echo ignoring error
+
+  # Check out the last commit before the due date.
+  git checkout `git rev-list -n 1 --before="2015-02-12 08:00 -0700" master`
+  israilsdir || die "No rails app found."
+  # byebug dies on 1.9.3, chuck it
+  sed -i 's/^\(.*byebug\)/#\1/' Gemfile
+  # make sure there's a secrets file.
+  [[ -f config/secrets.yml ]] || cat > config/secrets.yml << EOF
+development:
+  secret_key_base: 3b7cd727ee24e8444053437c36cc66c3
+  some_api_key: SOMEKEY
+EOF
+
+  # set up signal handler
+  trap int_handler INT
+
+  rake db:migrate || fixrake || exit 1
+  rake db:seed || die "Rake failed."
+
+  # check some files
+  echo "==> looking for route_map.txt"
+  if [[ -n `find . -name route_map.txt` ]]; then
+    echo "==> attempting to autodetect containers/items..."
+    models="$(grep \#create `find . -name route_map.txt` | sed 's/^.* \([^ ]*\)#create.*$/\1/')"
+    container=$(echo "$models"|tail -1)
+    item=$(echo "$models"|head -1)
+  else
+    missing '(-5) route map'
+    echo "==> attempting to autodetect containers/items..."
+    models="$(rake routes | grep \#create | sed 's/^.* \([^ ]*\)#create.*$/\1/')"
+  fi
+  echo "==> container: $container; item: $item"
+  #read -p "==> correct? [Y/n] " correct
+  #if [[ $correct == "n" ]]; then
+  #  swp=$container; container=$model; model=$swp;
+  #fi
+  echo "==> container: $container; item: $item"
+  # container pages
+  grep '^ *root' config/routes.rb || missing "(-1) root route"
+
+  # item pages
+  [[ -n `find app -name \*json\*` ]] && missing "(-2) refactor"
+
+  # run rails
+  rails server -d -p $2 || exit 1
+  xdg-open http://localhost:$2/
+
+  ## wait for interrupt
+  #while :; do sleep 1; done
+}
+
+
+int_handler() {
+  # kill rails
+  killall ruby; sleep 0.5
+  killall -9 ruby
+
+  exit
+}
+
+missing() {
+  echo -e '\e[1;31m==> Missing requirement: '"$1"'\e[0m'
+  echo "`pwd` missing requirement: $1" >> /data/george/grading/csci446/05/log 
+}
+
+die() {
+  echo Can\'t continue. :\(
+  echo "$1"
+  exit 1
+}
+
+israilsdir() {
+  [[ -e app ]]
+}
+
+fixrake() {
+  bundle install
+  rake db:migrate || (echo Rails won\'t start.; exit 1)
+}
+
+# Run
+main $1 $2
